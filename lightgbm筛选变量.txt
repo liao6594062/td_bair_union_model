@@ -1,0 +1,54 @@
+
+x = car_data[iv_df.Var.values.tolist()]
+
+x=x.drop(['hsdate_x_y','hsdate_x_x'],axis=1)
+
+del car_data
+gc.collect()
+
+x_train,x_test,y_train,y_test=train_test_split(x[iv_df.Var.values.tolist()], y, test_size=0.3,stratify = y ,random_state=0)
+
+bad=y_train[y_train==1]
+good=x_train[y_train==0]
+
+ori_good=good.sample(len(bad)*5,random_state=0)
+
+ori_x_train=pd.concat([ori_good,x_train.loc[bad.index,:]])
+
+ori_y_train=y_train.loc[ori_x_train.index]
+
+del good,bad,ori_good
+
+gc.collect()
+
+
+params={'boosting_type':'gbdt','learning_rate':0.01,'objective':'binary',
+ 'metric':'auc','max_depth':2,'verbose':2,'random_state':0}
+
+num_round=500
+
+early_stopping_rounds=300
+
+train_matrix=lgb.Dataset(ori_x_train,label=ori_y_train)
+
+test_matrix=lgb.Dataset(x_test,label=y_test)
+
+model=lgb.train(params,train_matrix,num_round,valid_sets=test_matrix)
+
+final_cols=iv_df['Var'].values.tolist()
+
+choose_cols=iv_df.loc[model.feature_importance()/model.feature_importance().sum()>0,'Var'].values.tolist()
+
+
+
+union_data=pd.read_excel('union_td_buildingmodel_20190708.xlsx')
+
+union_data['credentials_no_md5(客户身份证）']=union_data['credentials_no_md5(客户身份证）'].map(lambda x:x.replace('\t',''))
+
+union_data['cust_name_md5（客户姓名）']=union_data['cust_name_md5（客户姓名）'].map(lambda x:x.replace('\t',''))
+
+union_data['mobile_md5（客户手机号）']=union_data['mobile_md5（客户手机号）'].map(lambda x:x.replace('\t',''))
+
+union_data['applydate']=union_data['applydate'].map(lambda x:x.replace('\t',''))
+
+union_data['applydate']=union_data['applydate'].str.slice(0,10)

@@ -1,0 +1,362 @@
+## 计算iv的函数
+def CalcIV(Xvar, Yvar):
+   N_0 = np.sum(Yvar == 0)
+   N_1 = np.sum(Yvar == 1)
+   cuts = Xvar.quantile(np.arange(0, 1.1, 0.1)).values
+   if len(np.unique(Xvar))<=10 or len(np.unique(cuts))<=10 :
+      N_0_group = np.zeros(np.unique(Xvar).shape)
+      N_1_group = np.zeros(np.unique(Xvar).shape)
+      unique_value=np.unique(Xvar)
+   else:
+      N_0_group = np.zeros((10,))
+      N_1_group = np.zeros((10,))
+
+      cuts=cuts.tolist()
+      cuts[0] = -np.inf
+      cuts[10] = np.inf
+      Xvar = pd.cut(Xvar, cuts, right=True)
+      unique_value=Xvar.value_counts().index.tolist()
+
+   for i in range(len(unique_value)):
+         N_0_group[i] = Yvar[(Xvar == unique_value[i]) & (Yvar == 0)].count()
+         N_1_group[i] = Yvar[(Xvar ==unique_value[i]) & (Yvar == 1)].count()
+   iv = np.sum((N_0_group / N_0 - N_1_group / N_1) * np.log((N_0_group / N_0) / (N_1_group / N_1)))
+   cross_table=pd.crosstab(Xvar,Yvar,margins=True)
+
+   return iv,cross_table
+
+
+def caliv_batch(df, Yvar):
+   df_Xvar = df.drop(Yvar, axis=1)
+   ivlist = []
+   for col in df_Xvar.columns:
+      iv,cross_table = CalcIV(df_Xvar[col], df[Yvar])
+      ivlist.append(iv)
+   names = list(df_Xvar.columns)
+   iv_df = pd.DataFrame({'Var': names, 'Iv': ivlist}, columns=['Var', 'Iv'])
+
+   return iv_df
+
+iv_df=caliv_batch(columns_data,'30+')
+iv_df.ix[iv_df['Iv']==np.inf,'Iv']=np.nan
+most_importances_cols=iv_df.ix[iv_df['Iv']>=0.01,'Var'].values.tolist()
+
+
+
+'''
+## 数据处理相关代码
+'''
+for i, _ in de_dict_var.iterrows():
+    name = de_dict_var.loc[i, 'var_name']
+    default = de_dict_var.loc[i, 'default']
+    if default != '""' and name in set(xxdata.columns) :
+        try:
+            xxdata[name] = xxdata[name].astype('float64')
+            if (xxdata[name] == float(default)).sum() > 0:
+               xxdata.loc[xxdata[name] == float(default), name] = np.nan
+        except:
+            pass
+
+    elif default == '""' and name in set(xxdata.columns) :
+        try:
+            xxdata[name] = xxdata[name].astype('float64')
+            if (xxdata[name] == float(-99)).sum() > 0:
+                xxdata.loc[xxdata[name] == float(-99), name] = np.nan
+            if (xxdata[name] == '-99').sum() > 0:
+                xxdata.loc[xxdata[name] == '-99', name] = np.nan
+        except:
+            pass
+
+'''
+## 2.1 处理数据型变量，包括异常值处理等
+'''
+numeric_data=xxdata[numeric_columns]
+for col in numeric_columns:  #列出数据型变量异常值并对异常值进行处理 ，只有jxl_call_num_aver_6months异常值（负值）
+    if xxdata.ix[xxdata[col]<0,col].shape[0]>0:
+       print(col+':',xxdata.ix[xxdata[col]<0,col].unique())
+       xxdata.ix[xxdata[col] < 0, col]=np.nan
+
+'''
+## 2.2 处理日期型变量，将日期变量转为距离申请日期的天数
+'''
+for col in date_columns:  #去除异常的时间
+       try:
+          xxdata.ix[xxdata[col]>='2030-01-01',col]=np.nan
+       except:
+           pass
+
+def date_cal(x, app_applydate): #计算申请日期距离其他日期的天数
+    days_dt = pd.to_datetime(app_applydate) - pd.to_datetime(x)
+    return days_dt.dt.days
+
+for col in date_columns:
+    if col!='app_applydate':
+        try:
+            if col!='vehicle_minput_drivinglicensevaliditydate':
+                 xxdata[col] = date_cal(xxdata[col], xxdata['app_applydate'])
+                 xxdata.loc[xxdata[col] == -1, col] = 0
+                 xxdata.loc[xxdata[col] < -1, col] = np.nan
+            else:
+                xxdata[col] = date_cal( xxdata['app_applydate'],xxdata[col])  #计算行驶证有效期限距离申请日期的天数
+        except:
+            pass
+
+'''
+## 2.3 处理字符型变量，将一些不统计的取值统一
+'''
+
+for col in str_columns:  #列出字符变量的不同取值
+    print(col+':',xxdata[col].unique())
+
+cn_classes_ = {} #定义个字典，记录各string变量可能的类型
+for cn in x:
+    if cn in set(sample_var_desc.var_name) and sample_var_desc.loc[sample_var_desc.var_name == cn, 'var_type'].values[0] =='\ufeff字符型': #如果x中的变量cn在dic所列举的变量中且对应的type为String
+        x[cn] = x[cn].apply(lambda x: str(x)) #将x的cn列数据转换成字符串类型
+        # print(cn)
+        le = LabelEncoder() #调入LabelEncoder方法，作用对象为连续数值或文本数据，转换成数值序列
+        try: #try...except：异常处理，跳过可能出错的地方继续执行
+            x[cn] = le.fit_transform(x[cn]) #将字符串转换成有序数值序列
+            cn_classes_[cn] = le.classes_ #保存cn变量可能的类型
+        except:
+            print('bad col:') #打印bad col，同时可发现try出错
+            print(cn) #打印出哪些cn出错
+            for idx, num in enumerate(x[cn]): #遍历x的cn列
+                # print(type(x[cn].iat[idx]))
+                if type(num) != type('0'): #判断num的类型是否为Object，如果不是，转成字符型，？重复了，我觉得没必要
+                    # print(num)
+                    x[cn].iat[idx] = str(num) #赋值
+            x[cn] = le.fit_transform(x[cn])
+            cn_classes_[cn] = le.classes_
+
+
+
+'''
+## 模型训练相关代码
+'''
+ori_columns = numeric_columns + date_columns + dummy_columns
+y = model_data['y']
+x = model_data[ori_columns]
+x_train,x_test,y_train,y_test=train_test_split(x, y, test_size=0.3,stratify = y ,random_state=0)
+
+columns_corrcoef = model_data.drop(str_columns, axis=1).corr()
+
+for col in model_data:
+    if model_data[col].isnull().sum() > 0 and col!='y':
+        model_data.loc[model_data[col].isnull(), col] = -998
+
+
+
+## 依据模型按重要性将相关性较低的变量去除
+
+columns = numeric_columns + date_columns + dummy_columns
+columns.remove('m3_apply_mobile_platform_cnt') #剔除不稳定的变量
+columns.remove('cur_overdue_amount')
+
+
+##  选取在模型中重要性不小于给定阈值的变量
+final_columns=columns
+a=range(len(final_columns)+1)
+tol=0.03
+clf=XGBClassifier(learning_rate=0.01,
+                  min_child_weight=0.8,
+                  max_depth=3,
+                  gamma=30,
+                  n_estimators=250,
+                   random_state=0,objective='binary:logistic')
+clf = GradientBoostingClassifier(learning_rate=0.05,
+                                     min_samples_leaf=24,
+                                     max_depth=7,
+                                     max_leaf_nodes=25,
+                                     n_estimators=46,
+                                     random_state=0)
+while (len(a)>len(final_columns)):    
+    ## 训练模型并估计参数    
+    clf.fit(x_train[final_columns], y_train)     
+    pred_p = clf.predict_proba(x_train[final_columns])[:,1]
+    fpr, tpr, th = roc_curve(y_train, pred_p)
+    ks = tpr - fpr
+    pred_p2 = clf.predict_proba(x_test[final_columns])[:,1]
+    fpr, tpr, th = roc_curve(y_test, pred_p2)
+    ks2 = tpr - fpr
+    a = clf.feature_importances_.tolist()
+    print(final_columns)
+    print('len(final_columns)= ', len(final_columns))
+    print('minimum feature importance = ', min(a))
+    print('train ks: ' + str(max(ks)))
+    print('test ks:  ' + str(max(ks2)))
+
+    if( min(a) < tol ):
+        b = (clf.feature_importances_ == min(a))
+        final_columns = [final_columns[i] for i in range(len(final_columns)) if b[i]==False]
+
+## 取22个变量,剔除相关性比较强的变量
+feature_importance = pd.DataFrame({'var_name': final_columns, 'importance': a}).sort_values('importance', ascending=False)
+importances=pd.DataFrame(np.array(a), index=final_columns,columns=['importance'])
+del_columns=[]
+del_desc={}
+for onecol in final_columns:
+    meet_columns=columns_corrcoef.loc[columns_corrcoef[onecol].abs()>=0.70,:].index
+    meet_importances=importances.loc[meet_columns,:]
+    del_columns1=meet_importances.loc[meet_importances['importance']<meet_importances['importance'].max(),:].index.tolist()
+    del_columns2=meet_importances.loc[meet_importances['importance']>=meet_importances['importance'].max(),:].index.tolist()
+    del_desc2={}
+    for cn in meet_importances.index:
+        del_desc2[cn]=meet_importances.loc[cn,'importance']
+    if len(del_columns1)!=0 and len(del_columns2)!=0:
+        del_desc[del_columns2[0]]=del_desc2
+    del_columns.extend(del_columns1)
+final_columns=[col for col in final_columns if col not in del_columns]
+print(len(final_columns))
+
+
+
+
+
+'''
+##模型评估相关代码
+'''
+## 定义一些函数用于模型评估，计算KS
+def r_p(y_test, answer_p, idx, low=0, high=150):
+    a = answer_p
+    b = y_test
+
+    idx = idx[low:high]
+    recall = (b.iloc[idx] == 1).sum() / (b == 1).sum()
+    precision = (b.iloc[idx] == 1).sum() / (high - low)
+    return (recall, precision)
+
+
+def r_p_chart(y_test, answer_p, part=20):
+    print('分段  平均分 最小分 最大分 客户数 逾期数 逾期数/客户数 KS值 GAIN_INDEX 累计召回率')
+    a = answer_p
+    b = y_test
+
+    idx = sorted(range(len(a)), key=lambda k: a[k], reverse=True)
+
+    total_label_RATE = (y_test == 1).sum() / len(y_test)
+
+    ths = []
+    cum = 0
+    if len(np.unique(a)) < part:
+        for unq_a in np.unique(a)[::-1]:
+            ths.append(cum)
+            cum = cum + (a == unq_a).sum()
+        ths.append(cum)
+
+    else:
+        for i in np.arange(0, len(a), (len(a) / part)):
+            ths.append(int(round(i)))
+        ths.append(len(a))
+
+    min_scores = []
+    for idx_ths, _ in enumerate(ths):
+        if idx_ths == 0:
+            continue
+        # idx_ths = 1
+        low = ths[idx_ths - 1]
+        high = ths[idx_ths]
+
+        r, p = r_p(y_test, answer_p, idx, low, high)
+        cum_r, cum_p = r_p(y_test, answer_p, idx, 0, high)
+
+        max_score = answer_p[idx[low]]
+        min_score = answer_p[idx[high - 1]]
+        min_scores.append(min_score)
+        mean_score = (max_score + min_score) / 2
+        len_ = high - low
+        idx_tmp = idx[low:high]
+        bad_num = (b.iloc[idx_tmp] == 1).sum()
+        INTERVAL_label_RATE = bad_num / len_
+        idx_tmp = idx[0:high]
+
+        tpr = (b.iloc[idx_tmp] == 1).sum() / (b == 1).sum()
+        fpr = (b.iloc[idx_tmp] == 0).sum() / (b == 0).sum()
+        ks = tpr - fpr
+        gain_index = INTERVAL_label_RATE / total_label_RATE
+
+        print('%d %10.3f %10.3f %10.3f %7d %7d %10.2f %10.2f %10.2f %10.2f'
+              % (idx_ths, mean_score * 100, min_score * 100, max_score * 100, len_, bad_num, INTERVAL_label_RATE * 100,
+                 ks * 100, gain_index, cum_r * 100))
+
+    return min_scores
+
+
+def r_p_chart2(y_test, answer_p, min_scores, part=20):
+    print('分段  平均分 最小分 最大分 客户数 逾期数 逾期数/客户数 KS值 GAIN_INDEX 累计召回率')
+    a = answer_p
+    b = y_test
+
+    idx = sorted(range(len(a)), key=lambda k: a[k], reverse=True)
+
+    ths = []
+    ths.append(0)
+    min_scores_idx = 0
+    for num, i in enumerate(idx):
+        # print(a[i])
+        if a[i] < min_scores[min_scores_idx]:
+            ths.append(num)
+            min_scores_idx = min_scores_idx + 1
+    ths.append(len(idx))
+
+    total_label_RATE = (y_test == 1).sum() / len(y_test)
+
+    min_scores = []
+    for idx_ths, _ in enumerate(ths):
+        if idx_ths == 0:
+            continue
+        low = ths[idx_ths - 1]
+        high = ths[idx_ths]
+
+        r, p = r_p(y_test, answer_p, idx, low, high)
+        cum_r, cum_p = r_p(y_test, answer_p, idx, 0, high)
+
+        max_score = answer_p[idx[low]]
+        min_score = answer_p[idx[high - 1]]
+
+        min_scores.append(min_score)
+        mean_score = (max_score + min_score) / 2
+        len_ = high - low
+        idx_tmp = idx[low:high]
+        bad_num = (b.iloc[idx_tmp] == 1).sum()
+        INTERVAL_label_RATE = bad_num / len_
+        idx_tmp = idx[0:high]
+        tpr = (b.iloc[idx_tmp] == 1).sum() / (b == 1).sum()
+        fpr = (b.iloc[idx_tmp] == 0).sum() / (b == 0).sum()
+        ks = tpr - fpr
+        gain_index = INTERVAL_label_RATE / total_label_RATE
+
+        print('%d %10.3f %10.3f %10.3f %7d %7d %10.2f %10.2f %10.2f %10.2f'
+              % (idx_ths, mean_score * 100, min_score * 100, max_score * 100, len_, bad_num, INTERVAL_label_RATE * 100,
+                 ks * 100, gain_index, cum_r * 100))
+
+
+
+pred_p = clf.predict_proba(x_train[columns])[:, 1]
+min_scores = r_p_chart(y_train, pred_p, part=20)
+min_scores = [round(i, 5) for i in min_scores]
+min_scores[19] = 0
+cuts = [round(min_scores[i] * 100.0, 3) for i in range(20)[::-1]] + [100.0]
+
+print('训练集')
+pred_p = clf.predict_proba(x_train[columns])[:, 1]
+fpr, tpr, th = roc_curve(y_train, pred_p)
+ks = tpr - fpr
+print('train ks: ' + str(max(ks)))
+print(roc_auc_score(y_train, pred_p))
+r_p_chart2(y_train, pred_p, min_scores, part=20)
+
+print('测试集')
+pred_p2 = clf.predict_proba(x_test[columns])[:, 1]
+fpr, tpr, th = roc_curve(y_test, pred_p2)
+ks2 = tpr - fpr
+print('test ks:  ' + str(max(ks2)))
+print(roc_auc_score(y_test, pred_p2))
+r_p_chart2(y_test, pred_p2, min_scores, part=20)
+
+print('建模全集')
+pred_p3 = clf.predict_proba(x[columns])[:, 1]
+fpr, tpr, th = roc_curve(y, pred_p3)
+ks3 = tpr - fpr
+print('all ks:   ' + str(max(ks3)))
+print(roc_auc_score(y, pred_p3))
+r_p_chart2(y, pred_p3, min_scores, part=20)
